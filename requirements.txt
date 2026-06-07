@@ -1,1 +1,5 @@
+openai
+openai-agents
+pydantic
+python-dotenv
 reflex==0.9.3
