@@ -18,6 +18,7 @@ facility-manager-agent/
 │   ├── mieter.py
 │   ├── vermieter.py
 │   └── zeige_tickets.py
+│   └── zeige_handwerker.py
 │
 ├── datenbank.py                    ← Alle Datenbankfunktionen
 ├── mietvertrag.txt                 ← Beispiel Mietvertrag
@@ -54,14 +55,19 @@ Dann im Browser öffnen:
 ### `datenbank.py`
 Enthält alle Funktionen die mit der SQLite Datenbank kommunizieren. Wird von allen anderen Dateien importiert.
 
-| Funktion | Was sie macht |
-|---|---|
-| `erstelle_datenbank()` | Erstellt die Tickets-Tabelle beim ersten Start |
-| `speichere_ticket()` | Speichert eine neue Schadensmeldung als Ticket |
-| `hole_alle_tickets()` | Gibt alle Tickets zurück |
-| `hole_offene_tickets()` | Gibt nur offene und in Bearbeitung befindliche Tickets zurück |
-| `hole_archiv_tickets()` | Gibt nur geschlossene Tickets zurück |
-| `aktualisiere_ticket_status()` | Ändert den Status eines Tickets |
+| Funktion                             | Was sie macht                                                 |
+|--------------------------------------|---------------------------------------------------------------|
+| `erstelle_datenbank()`               | Erstellt die Tickets + Handwerker Tabelle                     |
+| `speichere_ticket()`                 | Speichert eine neue Schadensmeldung als Ticket                |
+| `hole_alle_tickets()`                | Gibt alle Tickets zurück                                      |
+| `hole_offene_tickets()`              | Gibt nur offene und in Bearbeitung befindliche Tickets zurück |
+| `hole_archiv_tickets()`              | Gibt nur geschlossene Tickets zurück                          |
+| `hole_alle_handwerker()`             | Gibt alle Handwerker zurück                                   |
+| `aktualisiere_ticket_status()`       | Ändert den Status eines Tickets                               |
+| `aktualisiere_ticket_handwerker()`   | Fügt Handwerker-Infos zu Ticket hinzu                         |
+| `fuege_dummy_handwerker_ein()`       | Fügt Beispiel-Handwerker ein                                  |
+| `suche_handwerker_nach_fachgebiet()` | Sucht Handwerker nach Fachgebiet                              |
+
 
 ---
 
@@ -225,6 +231,7 @@ MIETER (http://localhost:3000)
   → Agent bewertet Priorität (HOCH / MITTEL / NIEDRIG)
   → Erstellt Handlungsvorschlag
   → Erstellt E-Mail Entwurf
+  → Handwerker-Agent sucht passenden Handwerker
   → Speicher-Agent übernimmt Ticket in SQLite
 
 VERMIETER (http://localhost:3000/vermieter)

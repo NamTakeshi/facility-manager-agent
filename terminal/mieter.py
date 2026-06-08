@@ -14,12 +14,13 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE_DIR))
 
 from dotenv import load_dotenv
-from datenbank import erstelle_datenbank
+from datenbank import erstelle_datenbank, speichere_ticket, fuege_dummy_handwerker_ein
 from facility_manager_agent.terminal_agenten import (
     beantworte_frage,
     erstelle_schaden_workflow,
     klassifiziere_eingabe,
 )
+
 
 # API-Key aus .env laden. Der Agents SDK liest OPENAI_API_KEY aus der Umgebung.
 load_dotenv(BASE_DIR / ".env")
@@ -29,21 +30,31 @@ if not os.getenv("OPENAI_API_KEY"):
 
 # Datenbank beim Start erstellen
 erstelle_datenbank()
+fuege_dummy_handwerker_ein()
 
 # Mietvertrag aus Datei laden statt hardcoded.
 with open(BASE_DIR / "mietvertrag.txt", "r", encoding="utf-8") as f:
     mietvertrag = f.read()
 
 async def verarbeite_schaden(beschreibung: str, mieter: str) -> str:
-    """Laesst Agenten Schaden analysieren, Ticket erstellen und speichern."""
     workflow = await erstelle_schaden_workflow(beschreibung, mieter)
     schadensklassifikation = workflow.schadensklassifikation
     ticket_speicherung = workflow.ticket_speicherung
+    handwerker = workflow.handwerker
+
+    # Handwerker-Infos nachträglich ins Ticket speichern
+    from datenbank import aktualisiere_ticket_handwerker
+    aktualisiere_ticket_handwerker(
+        ticket_id=ticket_speicherung.ticket_id,
+        handwerker_name=handwerker.name,
+        handwerker_firma=handwerker.firma,
+        handwerker_email=handwerker.email,
+        handwerker_fachgebiet=handwerker.fachgebiet,
+    )
 
     return f"""Ticket #{ticket_speicherung.ticket_id} wurde erstellt.
-    Schadensart: {schadensklassifikation.schadensart}
     Priorität: {schadensklassifikation.prioritaet}
-    Der Vermieter wurde benachrichtigt."""
+    Der Vermieter wird sich zeitnah bei Ihnen melden."""
 
 
 async def main():

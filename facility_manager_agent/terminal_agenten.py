@@ -17,6 +17,8 @@ from agents import Agent, Runner, function_tool, trace
 from pydantic import BaseModel, Field
 
 from datenbank import speichere_ticket as speichere_ticket_in_db
+from datenbank import suche_handwerker_nach_fachgebiet
+
 
 
 MODELL = "gpt-5.4-mini"
@@ -63,12 +65,26 @@ class TicketSpeicherung(BaseModel):
     nachricht: str = Field(description="Kurze Bestaetigung fuer den Nutzer.")
 
 
+# FEHLER GEFUNDEN (behoben): HandwerkerEmpfehlung muss VOR SchadenWorkflowErgebnis
+# definiert sein, da Python Klassen-Annotationen sofort auswertet (kein Forward Reference).
+class HandwerkerEmpfehlung(BaseModel):
+    """Empfohlener Handwerker für eine Schadensmeldung."""
+
+    handwerker_id: int = Field(description="ID des empfohlenen Handwerkers.")
+    name: str = Field(description="Name des Handwerkers.")
+    firma: str = Field(description="Firma des Handwerkers.")
+    fachgebiet: str = Field(description="Fachgebiet des Handwerkers.")
+    email: str = Field(description="E-Mail des Handwerkers.")
+    begruendung: str = Field(description="Kurze Begründung warum dieser Handwerker passt.")
+
+
 class SchadenWorkflowErgebnis(BaseModel):
     """Gesamtergebnis des Schaden-Workflows inklusive Datenbank-Speicherung."""
 
     schadensklassifikation: SchadenKlassifikation
     ticket_entwurf: TicketEntwurf
     ticket_speicherung: TicketSpeicherung
+    handwerker: HandwerkerEmpfehlung
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +164,25 @@ Regeln:
 - Liefere nur das strukturierte Schema.
 """
 
+handwerker_agent_inst = """
+Du bist der Handwerker-Empfehlungs-Agent für einen Facility-Manager.
 
+Aufgabe:
+- Analysiere die Schadensart und bestimme das passende Fachgebiet
+- Nutze das Tool suche_passenden_handwerker um einen Handwerker zu finden
+- Empfehle den Handwerker mit der besten Bewertung
+
+Fachgebiete:
+- Heizung: Heizungsausfall, Heizkörper, Thermostat
+- Sanitär: Wasserhahn, Rohr, Toilette, Dusche
+- Elektro: Steckdose, Licht, Sicherung
+- Schimmel: Schimmel, Feuchtigkeit
+- Allgemein: alles andere
+
+Regeln:
+- Rufe das Tool genau einmal auf
+- Liefere nur das strukturierte Schema
+"""
 # ---------------------------------------------------------------------------
 # 3. Tools
 # ---------------------------------------------------------------------------
@@ -180,6 +214,29 @@ def speichere_schadenticket(
         email_entwurf=email_entwurf,
     )
 
+
+@function_tool
+def suche_passenden_handwerker(fachgebiet: str) -> str:
+    """
+    Sucht einen passenden Handwerker aus der Datenbank.
+    Nutze dieses Tool um den besten Handwerker für einen Schaden zu finden.
+
+    Args:
+        fachgebiet: Fachgebiet des gesuchten Handwerkers z.B. Heizung, Sanitär, Elektro, Schimmel
+    """
+    handwerker = suche_handwerker_nach_fachgebiet(fachgebiet)
+
+    if not handwerker:
+        return f"Kein Handwerker für Fachgebiet '{fachgebiet}' gefunden."
+
+    # Ergebnis als lesbaren Text zurückgeben
+    ergebnis = []
+    for h in handwerker:
+        ergebnis.append(
+            f"ID: {h[0]} | Name: {h[1]} | Firma: {h[2]} | "
+            f"Fachgebiet: {h[3]} | Email: {h[4]} | Bewertung: {h[6]}/5"
+        )
+    return "\n".join(ergebnis)
 
 # ---------------------------------------------------------------------------
 # 4. Agenten erstellen
@@ -220,6 +277,13 @@ ticket_speicher_agent = Agent[Any](
     output_type=TicketSpeicherung,
 )
 
+handwerker_agent = Agent[Any](
+    name="Handwerker-Empfehlungs-Agent",
+    instructions=handwerker_agent_inst,
+    model=MODELL,
+    tools=[suche_passenden_handwerker],
+    output_type=HandwerkerEmpfehlung,
+)
 
 # ---------------------------------------------------------------------------
 # 5. Workflow-Funktionen
@@ -314,6 +378,7 @@ async def erstelle_schaden_workflow(
     Fuehrt den dreistufigen Schaden-Workflow aus:
     1. Schaden klassifizieren
     2. Ticket-Inhalte erstellen
+    3. Handwerker empfehlen
     3. Ticket ueber den Ticket-Speicher-Agenten in SQLite speichern
     """
     schadensklassifikation = await klassifiziere_schaden(beschreibung, mieter)
@@ -322,6 +387,7 @@ async def erstelle_schaden_workflow(
         mieter,
         schadensklassifikation,
     )
+    handwerker = await empfehle_handwerker(beschreibung, schadensklassifikation)
     ticket_speicherung = await speichere_ticket_mit_agent(
         beschreibung,
         mieter,
@@ -333,4 +399,19 @@ async def erstelle_schaden_workflow(
         schadensklassifikation=schadensklassifikation,
         ticket_entwurf=ticket_entwurf,
         ticket_speicherung=ticket_speicherung,
+        handwerker=handwerker,
     )
+
+async def empfehle_handwerker(
+    schadensart: str,
+    schadensklassifikation: SchadenKlassifikation,
+) -> HandwerkerEmpfehlung:
+    """Sucht passenden Handwerker basierend auf Schadensart."""
+    eingabe = f"""
+Schadensart: {schadensart}
+Fachgebiet bestimmen und passenden Handwerker suchen.
+Schadensklassifikation: {schadensklassifikation.schadensart}
+"""
+    with trace("Facility Manager: Handwerker suchen"):
+        result = await Runner.run(handwerker_agent, eingabe)
+        return result.final_output

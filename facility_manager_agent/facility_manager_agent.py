@@ -11,10 +11,12 @@ sys.path.insert(0, str(BASE_DIR))
 
 from datenbank import (
     aktualisiere_ticket_status,
+    aktualisiere_ticket_handwerker,
     erstelle_datenbank,
     hole_alle_tickets,
     hole_archiv_tickets,
     hole_offene_tickets,
+    fuege_dummy_handwerker_ein,
 )
 from facility_manager_agent.terminal_agenten import (
     beantworte_frage,
@@ -24,6 +26,7 @@ from facility_manager_agent.terminal_agenten import (
 
 load_dotenv(BASE_DIR / ".env")
 erstelle_datenbank()
+fuege_dummy_handwerker_ein()
 
 # Mietvertrag laden
 with open(BASE_DIR / "mietvertrag.txt", "r", encoding="utf-8") as f:
@@ -63,14 +66,25 @@ class State(rx.State):
             if self.kategorie == "FRAGE":
                 self.antwort = await beantworte_frage(self.nachricht, mietvertrag)
 
+
+
             elif self.kategorie == "SCHADEN":
                 workflow = await erstelle_schaden_workflow(self.nachricht, self.name)
                 schadensklassifikation = workflow.schadensklassifikation
                 ticket_speicherung = workflow.ticket_speicherung
+                handwerker = workflow.handwerker
+                # Handwerker-Infos ins Ticket speichern
+                aktualisiere_ticket_handwerker(
+                    ticket_id=ticket_speicherung.ticket_id,
+                    handwerker_name=handwerker.name,
+                    handwerker_firma=handwerker.firma,
+                    handwerker_email=handwerker.email,
+                    handwerker_fachgebiet=handwerker.fachgebiet,
+                )
                 self.antwort = (
                     "Ihre Schadensmeldung wurde aufgenommen. "
                     f"Ticket #{ticket_speicherung.ticket_id} wurde erstellt. "
-                    f"Priorität: {schadensklassifikation.prioritaet}"
+                    "Der Vermieter wird sich zeitnah bei Ihnen melden."
                 )
 
             else:
@@ -250,6 +264,9 @@ def vermieter():
                 rx.text(f"Status: {ticket[7]}", color="#1A1A1A"),
                 rx.text(f"Vorschlag: {ticket[5]}", color="#1A1A1A"),
                 rx.text(f"E-Mail: {ticket[6]}", color="#1A1A1A"),
+                rx.text(f"Handwerker: {ticket[9]}", color="#1A1A1A"),
+                rx.text(f"Firma: {ticket[10]}", color="#1A1A1A"),
+                rx.text(f"Handwerker Kontakt: {ticket[11]}", color="#1A1A1A"),
 
                 # Status Buttons – immer sichtbar, alle Optionen
                 rx.hstack(
