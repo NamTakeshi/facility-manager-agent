@@ -1,20 +1,22 @@
 """
-Agenten-Workflow fuer die Terminal-Version des Facility Manager Agent.
+Gemeinsamer Agents-SDK-Workflow fuer Terminal und Reflex-Web-App.
 
 Struktur:
 1. Ausgabe-Schemas definieren
 2. Instruction-Strings fuer die Agenten definieren
-3. Agenten erstellen
-4. Runner-Schritte in klaren Workflow-Funktionen ausfuehren
+3. Tools definieren
+4. Agenten erstellen
+5. Runner-Schritte in klaren Workflow-Funktionen ausfuehren
 
-Wichtig: Die Agenten erzeugen strukturierte Ergebnisse. Das Speichern in die
-SQLite-Datenbank passiert weiterhin kontrolliert im Terminal-Skript, damit ein
-Ticket nicht versehentlich mehrfach oder mit falschem Zeitpunkt gespeichert wird.
+Wichtig: Analyse, Ticket-Inhalte und Speicherung sind getrennte Agent-Schritte.
+Der Ticket-Speicher-Agent darf nur das explizit definierte SQLite-Tool nutzen.
 """
 from typing import Any, Literal
 
-from agents import Agent, Runner, trace
+from agents import Agent, Runner, function_tool, trace
 from pydantic import BaseModel, Field
+
+from datenbank import speichere_ticket as speichere_ticket_in_db
 
 
 MODELL = "gpt-5.4-mini"
@@ -53,11 +55,20 @@ class TicketEntwurf(BaseModel):
     )
 
 
+class TicketSpeicherung(BaseModel):
+    """Ergebnis des Ticket-Speicher-Agenten nach dem SQLite-Insert."""
+
+    ticket_id: int = Field(description="ID des gespeicherten Tickets.")
+    status: Literal["GESPEICHERT"] = Field(description="Speicherstatus.")
+    nachricht: str = Field(description="Kurze Bestaetigung fuer den Nutzer.")
+
+
 class SchadenWorkflowErgebnis(BaseModel):
-    """Gesamtergebnis des Schaden-Workflows vor dem Datenbank-Speichern."""
+    """Gesamtergebnis des Schaden-Workflows inklusive Datenbank-Speicherung."""
 
     schadensklassifikation: SchadenKlassifikation
     ticket_entwurf: TicketEntwurf
+    ticket_speicherung: TicketSpeicherung
 
 
 # ---------------------------------------------------------------------------
@@ -122,9 +133,56 @@ Regeln:
 - Liefere nur das strukturierte Schema.
 """
 
+ticket_speicher_agent_inst = """
+Du bist der Ticket-Speicher-Agent fuer die SQLite-Datenbank.
+
+Aufgabe:
+- Speichere genau ein fertiges Schaden-Ticket in der Datenbank.
+- Nutze dafuer das Tool `speichere_schadenticket`.
+- Gib danach die gespeicherte Ticket-ID strukturiert zurueck.
+
+Regeln:
+- Rufe das Tool genau einmal auf.
+- Veraendere die uebergebenen Ticket-Inhalte nicht.
+- Speichere nur Tickets mit Kategorie "Schaden".
+- Liefere nur das strukturierte Schema.
+"""
+
 
 # ---------------------------------------------------------------------------
-# 3. Agenten erstellen
+# 3. Tools
+# ---------------------------------------------------------------------------
+
+@function_tool
+def speichere_schadenticket(
+    mieter: str,
+    beschreibung: str,
+    prioritaet: Literal["HOCH", "MITTEL", "NIEDRIG"],
+    handlungsvorschlag: str,
+    email_entwurf: str,
+) -> int:
+    """
+    Speichert ein Schaden-Ticket in der SQLite-Datenbank und gibt die Ticket-ID zurueck.
+
+    Args:
+        mieter: Name des Mieters.
+        beschreibung: Originale Schadensbeschreibung.
+        prioritaet: Prioritaet des Schadens.
+        handlungsvorschlag: Handlungsvorschlag fuer den Vermieter.
+        email_entwurf: E-Mail-Entwurf an den Mieter.
+    """
+    return speichere_ticket_in_db(
+        mieter=mieter,
+        beschreibung=beschreibung,
+        kategorie="Schaden",
+        prioritaet=prioritaet,
+        handlungsvorschlag=handlungsvorschlag,
+        email_entwurf=email_entwurf,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. Agenten erstellen
 # ---------------------------------------------------------------------------
 
 eingabe_klassifizierer = Agent[Any](
@@ -154,14 +212,22 @@ ticket_agent = Agent[Any](
     output_type=TicketEntwurf,
 )
 
+ticket_speicher_agent = Agent[Any](
+    name="Ticket-Speicher-Agent",
+    instructions=ticket_speicher_agent_inst,
+    model=MODELL,
+    tools=[speichere_schadenticket],
+    output_type=TicketSpeicherung,
+)
+
 
 # ---------------------------------------------------------------------------
-# 4. Workflow-Funktionen
+# 5. Workflow-Funktionen
 # ---------------------------------------------------------------------------
 
 async def klassifiziere_eingabe(nachricht: str) -> EingabeKlassifikation:
     """Klassifiziert die Mieternachricht als FRAGE, SCHADEN oder SONSTIGES."""
-    with trace("Terminal: Eingabe klassifizieren"):
+    with trace("Facility Manager: Eingabe klassifizieren"):
         result = await Runner.run(eingabe_klassifizierer, nachricht)
         return result.final_output
 
@@ -176,7 +242,7 @@ Frage des Mieters:
 {frage}
 """
 
-    with trace("Terminal: Mietvertragsfrage beantworten"):
+    with trace("Facility Manager: Mietvertragsfrage beantworten"):
         result = await Runner.run(fragen_agent, eingabe)
         return str(result.final_output).strip()
 
@@ -191,7 +257,7 @@ Mieter: {mieter}
 Schadensmeldung: {beschreibung}
 """
 
-    with trace("Terminal: Schaden klassifizieren"):
+    with trace("Facility Manager: Schaden klassifizieren"):
         result = await Runner.run(schaden_klassifizierer, eingabe)
         return result.final_output
 
@@ -210,8 +276,33 @@ Prioritaet: {schadensklassifikation.prioritaet}
 Begruendung: {schadensklassifikation.begruendung}
 """
 
-    with trace("Terminal: Ticket-Inhalte erstellen"):
+    with trace("Facility Manager: Ticket-Inhalte erstellen"):
         result = await Runner.run(ticket_agent, eingabe)
+        return result.final_output
+
+
+async def speichere_ticket_mit_agent(
+    beschreibung: str,
+    mieter: str,
+    schadensklassifikation: SchadenKlassifikation,
+    ticket_entwurf: TicketEntwurf,
+) -> TicketSpeicherung:
+    """Speichert ein fertiges Schaden-Ticket ueber den Ticket-Speicher-Agenten."""
+    eingabe = f"""
+Speichere dieses Schaden-Ticket in der SQLite-Datenbank.
+
+Mieter: {mieter}
+Beschreibung: {beschreibung}
+Kategorie: Schaden
+Prioritaet: {schadensklassifikation.prioritaet}
+Handlungsvorschlag: {ticket_entwurf.handlungsvorschlag}
+E-Mail-Entwurf: {ticket_entwurf.email_entwurf}
+
+Nutze das Tool `speichere_schadenticket` genau einmal.
+"""
+
+    with trace("Facility Manager: Ticket speichern"):
+        result = await Runner.run(ticket_speicher_agent, eingabe)
         return result.final_output
 
 
@@ -220,9 +311,10 @@ async def erstelle_schaden_workflow(
     mieter: str,
 ) -> SchadenWorkflowErgebnis:
     """
-    Fuehrt den zweistufigen Schaden-Workflow aus:
+    Fuehrt den dreistufigen Schaden-Workflow aus:
     1. Schaden klassifizieren
     2. Ticket-Inhalte erstellen
+    3. Ticket ueber den Ticket-Speicher-Agenten in SQLite speichern
     """
     schadensklassifikation = await klassifiziere_schaden(beschreibung, mieter)
     ticket_entwurf = await erstelle_ticket_entwurf(
@@ -230,8 +322,15 @@ async def erstelle_schaden_workflow(
         mieter,
         schadensklassifikation,
     )
+    ticket_speicherung = await speichere_ticket_mit_agent(
+        beschreibung,
+        mieter,
+        schadensklassifikation,
+        ticket_entwurf,
+    )
 
     return SchadenWorkflowErgebnis(
         schadensklassifikation=schadensklassifikation,
         ticket_entwurf=ticket_entwurf,
+        ticket_speicherung=ticket_speicherung,
     )
