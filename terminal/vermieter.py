@@ -5,17 +5,13 @@ Zum Testen ohne Reflex zu starten.
 Vermieter können Tickets anzeigen und Status ändern – direkt im Terminal.
 Starten mit: ^R
 """
-import os
 import sys
+from pathlib import Path
 
-sys.path.append('..')  # einen Ordner höher schauen
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BASE_DIR))
 
-from openai import OpenAI
-from dotenv import load_dotenv
 from datenbank import hole_alle_tickets, aktualisiere_ticket_status
-
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def zeige_tickets():
     tickets = hole_alle_tickets()
