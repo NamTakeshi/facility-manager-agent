@@ -110,6 +110,86 @@ Die Haupt-Datei der Web-App. Enthält die gesamte Logik und das UI.
 ### `terminal/mieter.py`
 Terminal-Version des Mieter-Interfaces. Zum Testen ohne Reflex zu starten.
 
+Die Terminal-Version nutzt den OpenAI Agents SDK. Der Ablauf ist bewusst wie ein
+klarer Agents-Workflow aufgebaut:
+
+```
+Mieternachricht
+  → Eingabe-Klassifizierungs-Agent
+  → bei FRAGE: Mietvertrags-Frage-Agent
+  → bei SCHADEN: Schaden-Klassifizierungs-Agent
+                 → Ticket-Erstellungs-Agent
+                 → Python speichert Ticket in SQLite
+  → bei SONSTIGES: Standardantwort
+```
+
+Die Agenten sind in `facility_manager_agent/terminal_agenten.py` definiert.
+Dort ist die Struktur:
+
+1. Ausgabe-Schemas
+2. Instruction-Strings
+3. Agent-Definitionen
+4. Workflow-Funktionen mit `Runner.run(...)` und `trace(...)`
+
+Der Agents SDK nutzt intern weiterhin die OpenAI API, aber der Terminal-Code
+macht keine direkten `client.chat.completions.create(...)` Aufrufe mehr.
+
+#### Unterschied zur frueheren direkten API-Nutzung
+
+Frueher lagen Prompt, Modellaufruf und Parsing direkt in `terminal/mieter.py`.
+Der Code hat mehrfach direkt die Chat-Completions-API aufgerufen:
+
+```python
+client.chat.completions.create(...)
+```
+
+Danach musste die Textantwort manuell ausgewertet werden, z. B. durch Suchen nach
+`PRIORITÄT:`, `VORSCHLAG:`, `EMAIL_START` und `EMAIL_END`. Das war fehleranfaellig,
+weil kleine Formatabweichungen des Modells das Parsing brechen konnten.
+
+Jetzt spricht `terminal/mieter.py` nicht mehr direkt mit `chat.completions`.
+Stattdessen ruft es Funktionen aus `facility_manager_agent/terminal_agenten.py` auf.
+Dort sind die Agenten klar getrennt definiert:
+
+| Agent | Aufgabe |
+|---|---|
+| `eingabe_klassifizierer` | Entscheidet, ob die Nachricht `FRAGE`, `SCHADEN` oder `SONSTIGES` ist |
+| `fragen_agent` | Beantwortet Mietvertragsfragen nur mit Kontext aus `mietvertrag.txt` |
+| `schaden_klassifizierer` | Bestimmt Schadensart, Prioritaet und Begruendung |
+| `ticket_agent` | Erstellt Handlungsvorschlag und E-Mail-Entwurf |
+
+Die Agenten werden mit dem Agents SDK ausgefuehrt:
+
+```python
+result = await Runner.run(agent, eingabe)
+```
+
+Fuer Klassifikation, Schadenanalyse und Ticket-Inhalte werden Pydantic-Schemas
+verwendet. Dadurch kommen strukturierte Python-Objekte zurueck, nicht frei zu
+parsende Textbloecke.
+
+Beispiel:
+
+```python
+schadensklassifikation.prioritaet
+ticket_entwurf.email_entwurf
+```
+
+Das Speichern in SQLite bleibt bewusst in normalem Python-Code in
+`terminal/mieter.py`. Der Agent erzeugt also die Inhalte, aber Python entscheidet,
+wann `speichere_ticket(...)` aufgerufen wird. Dadurch bleibt der Datenbankzugriff
+kontrolliert und nachvollziehbar.
+
+Kurz gesagt:
+
+```text
+Frueher:
+terminal/mieter.py -> direkter Chat-Completions-Call -> Text parsen -> Ticket speichern
+
+Jetzt:
+terminal/mieter.py -> Agents-SDK-Workflow -> strukturierte Ergebnisse -> Ticket speichern
+```
+
 
 ### `terminal/vermieter.py`
 Terminal-Version des Vermieter-Dashboards. Zeigt Tickets als Text im Terminal.
@@ -151,7 +231,7 @@ VERMIETER (http://localhost:3000/vermieter)
 | Komponente | Technologie           |
 |---|-----------------------|
 | LLM | GPT-5.4 mini (OpenAI) |
-| Agent Framework | Direkte OpenAI API    |
+| Agent Framework | Terminal: OpenAI Agents SDK / Web-App: Direkte OpenAI API |
 | Datenbank | SQLite                |
 | Web-App | Reflex                |
 | Sprache | Python                |
@@ -163,3 +243,38 @@ VERMIETER (http://localhost:3000/vermieter)
 - Die `.env` Datei niemals in Git einchecken – sie enthält den API Key
 - Die `facility.db` wird automatisch erstellt beim ersten Start
 - Beim Ändern der Datenbankstruktur muss `facility.db` gelöscht und neu erstellt werden
+- Die Terminal-Version nutzt bereits den OpenAI Agents SDK. Die Web-App ist noch nicht migriert.
+
+
+
+## Agents-SDK Setup fuer die Terminal-Version
+
+Nach dem Pull:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+In der `.env` Datei muss ein OpenAI API-Key stehen:
+
+```env
+OPENAI_API_KEY=dein-api-key
+```
+
+Terminal-Agent starten:
+
+```bash
+python terminal/mieter.py
+```
+
+Pruefen, dass der Terminal-Code ueber den Agents SDK laeuft:
+
+```bash
+rg "from agents|Runner.run|trace" facility_manager_agent/terminal_agenten.py terminal
+rg "chat.completions|OpenAI\\(" terminal facility_manager_agent/terminal_agenten.py
+```
+Agents SDK = Logik / KI-Workflow
+mieter.py = Terminal-Eingabe und Speichern
+vermieter.py = Terminal-Dashboard
