@@ -14,7 +14,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE_DIR))
 
 from dotenv import load_dotenv
-from datenbank import erstelle_datenbank, speichere_ticket
+from datenbank import erstelle_datenbank
 from facility_manager_agent.terminal_agenten import (
     beantworte_frage,
     erstelle_schaden_workflow,
@@ -35,22 +35,12 @@ with open(BASE_DIR / "mietvertrag.txt", "r", encoding="utf-8") as f:
     mietvertrag = f.read()
 
 async def verarbeite_schaden(beschreibung: str, mieter: str) -> str:
-    """Laesst Agenten Schaden und Ticket-Inhalte erstellen und speichert danach."""
+    """Laesst Agenten Schaden analysieren, Ticket erstellen und speichern."""
     workflow = await erstelle_schaden_workflow(beschreibung, mieter)
     schadensklassifikation = workflow.schadensklassifikation
-    ticket = workflow.ticket_entwurf
+    ticket_speicherung = workflow.ticket_speicherung
 
-    # Der Datenbank-Schreibvorgang bleibt deterministisch im Python-Code.
-    ticket_id = speichere_ticket(
-        mieter=mieter,
-        beschreibung=beschreibung,
-        kategorie="Schaden",
-        prioritaet=schadensklassifikation.prioritaet,
-        handlungsvorschlag=ticket.handlungsvorschlag,
-        email_entwurf=ticket.email_entwurf,
-    )
-
-    return f"""Ticket #{ticket_id} wurde erstellt.
+    return f"""Ticket #{ticket_speicherung.ticket_id} wurde erstellt.
     Schadensart: {schadensklassifikation.schadensart}
     Priorität: {schadensklassifikation.prioritaet}
     Der Vermieter wurde benachrichtigt."""

@@ -11,6 +11,7 @@ facility-manager-agent/
 │
 ├── facility_manager_agent/         ← Reflex Web-App (Haupt-Interface)
 │   ├── __init__.py
+│   ├── terminal_agenten.py          ← Gemeinsamer Agents-SDK-Workflow
 │   └── facility_manager_agent.py
 │
 ├── terminal/                       ← Terminal-Versionen (zum Testen)
@@ -33,12 +34,12 @@ facility-manager-agent/
 
 ```bash
 # Bibliotheken installieren
-pip3 install openai python-dotenv reflex
+python3 -m pip install -r requirements.txt
 
 # API Key in .env Datei eintragen
 OPENAI_API_KEY=dein-api-key-hier
 
-# App starten
+# Web-App starten
 reflex run
 ```
 
@@ -73,6 +74,10 @@ Jedes Ticket enthält: ID, Mieter, Beschreibung, Kategorie, Priorität, Handlung
 
 ### `facility_manager_agent/facility_manager_agent.py`
 Die Haupt-Datei der Web-App. Enthält die gesamte Logik und das UI.
+Die Mieter-Seite nutzt den gemeinsamen Agents-SDK-Workflow aus
+`facility_manager_agent/terminal_agenten.py`. Direkte
+`client.chat.completions.create(...)` Aufrufe werden in der Web-App nicht mehr
+verwendet.
 
 #### Klassen (Für die Logik)
 
@@ -110,8 +115,8 @@ Die Haupt-Datei der Web-App. Enthält die gesamte Logik und das UI.
 ### `terminal/mieter.py`
 Terminal-Version des Mieter-Interfaces. Zum Testen ohne Reflex zu starten.
 
-Die Terminal-Version nutzt den OpenAI Agents SDK. Der Ablauf ist bewusst wie ein
-klarer Agents-Workflow aufgebaut:
+Terminal und Web-App nutzen denselben OpenAI Agents SDK Workflow. Der Ablauf ist
+bewusst wie ein klarer Agents-Workflow aufgebaut:
 
 ```
 Mieternachricht
@@ -119,7 +124,8 @@ Mieternachricht
   → bei FRAGE: Mietvertrags-Frage-Agent
   → bei SCHADEN: Schaden-Klassifizierungs-Agent
                  → Ticket-Erstellungs-Agent
-                 → Python speichert Ticket in SQLite
+                 → Ticket-Speicher-Agent
+                 → SQLite speichert Ticket
   → bei SONSTIGES: Standardantwort
 ```
 
@@ -128,11 +134,12 @@ Dort ist die Struktur:
 
 1. Ausgabe-Schemas
 2. Instruction-Strings
-3. Agent-Definitionen
-4. Workflow-Funktionen mit `Runner.run(...)` und `trace(...)`
+3. Tool-Definition fuer den SQLite-Insert
+4. Agent-Definitionen
+5. Workflow-Funktionen mit `Runner.run(...)` und `trace(...)`
 
-Der Agents SDK nutzt intern weiterhin die OpenAI API, aber der Terminal-Code
-macht keine direkten `client.chat.completions.create(...)` Aufrufe mehr.
+Der Agents SDK nutzt intern weiterhin die OpenAI API, aber Terminal und Web-App
+machen keine direkten `client.chat.completions.create(...)` Aufrufe mehr.
 
 #### Unterschied zur frueheren direkten API-Nutzung
 
@@ -147,8 +154,9 @@ Danach musste die Textantwort manuell ausgewertet werden, z. B. durch Suchen nac
 `PRIORITÄT:`, `VORSCHLAG:`, `EMAIL_START` und `EMAIL_END`. Das war fehleranfaellig,
 weil kleine Formatabweichungen des Modells das Parsing brechen konnten.
 
-Jetzt spricht `terminal/mieter.py` nicht mehr direkt mit `chat.completions`.
-Stattdessen ruft es Funktionen aus `facility_manager_agent/terminal_agenten.py` auf.
+Jetzt sprechen `terminal/mieter.py` und `facility_manager_agent/facility_manager_agent.py`
+nicht mehr direkt mit `chat.completions`. Stattdessen rufen sie Funktionen aus
+`facility_manager_agent/terminal_agenten.py` auf.
 Dort sind die Agenten klar getrennt definiert:
 
 | Agent | Aufgabe |
@@ -157,6 +165,7 @@ Dort sind die Agenten klar getrennt definiert:
 | `fragen_agent` | Beantwortet Mietvertragsfragen nur mit Kontext aus `mietvertrag.txt` |
 | `schaden_klassifizierer` | Bestimmt Schadensart, Prioritaet und Begruendung |
 | `ticket_agent` | Erstellt Handlungsvorschlag und E-Mail-Entwurf |
+| `ticket_speicher_agent` | Speichert das fertige Schaden-Ticket ueber ein Tool in SQLite |
 
 Die Agenten werden mit dem Agents SDK ausgefuehrt:
 
@@ -175,10 +184,10 @@ schadensklassifikation.prioritaet
 ticket_entwurf.email_entwurf
 ```
 
-Das Speichern in SQLite bleibt bewusst in normalem Python-Code in
-`terminal/mieter.py`. Der Agent erzeugt also die Inhalte, aber Python entscheidet,
-wann `speichere_ticket(...)` aufgerufen wird. Dadurch bleibt der Datenbankzugriff
-kontrolliert und nachvollziehbar.
+Das Speichern in SQLite laeuft jetzt ebenfalls ueber einen Agenten-Schritt:
+Der `ticket_speicher_agent` nutzt das Tool `speichere_schadenticket`. Dieses Tool
+ist die einzige Stelle im Agents-SDK-Workflow, die den SQLite-Insert ausfuehrt.
+Dadurch bleibt der Datenbankzugriff weiterhin klar begrenzt und nachvollziehbar.
 
 Kurz gesagt:
 
@@ -187,7 +196,7 @@ Frueher:
 terminal/mieter.py -> direkter Chat-Completions-Call -> Text parsen -> Ticket speichern
 
 Jetzt:
-terminal/mieter.py -> Agents-SDK-Workflow -> strukturierte Ergebnisse -> Ticket speichern
+Terminal/Web-App -> Agents-SDK-Workflow -> Ticket-Speicher-Agent -> SQLite
 ```
 
 
@@ -216,7 +225,7 @@ MIETER (http://localhost:3000)
   → Agent bewertet Priorität (HOCH / MITTEL / NIEDRIG)
   → Erstellt Handlungsvorschlag
   → Erstellt E-Mail Entwurf
-  → Speichert Ticket in SQLite
+  → Speicher-Agent übernimmt Ticket in SQLite
 
 VERMIETER (http://localhost:3000/vermieter)
   → Sieht alle Tickets mit Details
@@ -231,7 +240,7 @@ VERMIETER (http://localhost:3000/vermieter)
 | Komponente | Technologie           |
 |---|-----------------------|
 | LLM | GPT-5.4 mini (OpenAI) |
-| Agent Framework | Terminal: OpenAI Agents SDK / Web-App: Direkte OpenAI API |
+| Agent Framework | OpenAI Agents SDK |
 | Datenbank | SQLite                |
 | Web-App | Reflex                |
 | Sprache | Python                |
@@ -243,19 +252,29 @@ VERMIETER (http://localhost:3000/vermieter)
 - Die `.env` Datei niemals in Git einchecken – sie enthält den API Key
 - Die `facility.db` wird automatisch erstellt beim ersten Start
 - Beim Ändern der Datenbankstruktur muss `facility.db` gelöscht und neu erstellt werden
-- Die Terminal-Version nutzt bereits den OpenAI Agents SDK. Die Web-App ist noch nicht migriert.
+- Terminal und Web-App nutzen den gemeinsamen OpenAI Agents SDK Workflow.
 
 
 
-## Agents-SDK Setup fuer die Terminal-Version
+## Agents-SDK Setup fuer Terminal und Web-App
 
-Nach dem Pull:
+Nach dem Pull die Abhaengigkeiten in der jeweils genutzten Python-Umgebung
+installieren. Das kann eine virtuelle Umgebung, eine Conda-Umgebung oder eine
+andere aktive Umgebung sein. Wichtig ist nur, dass der Python-Interpreter und
+`pip` auf dieselbe Umgebung zeigen.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
+
+Falls die eigene Umgebung einen anderen Interpreter-Namen verwendet, den Befehl
+entsprechend anpassen, z. B. `python -m pip ...`.
+
+-falls eine virtuelle Umgebung genutzt wird:
+```bash
+source .venv/bin/activate
+```
+
 
 In der `.env` Datei muss ein OpenAI API-Key stehen:
 
@@ -266,15 +285,31 @@ OPENAI_API_KEY=dein-api-key
 Terminal-Agent starten:
 
 ```bash
-python terminal/mieter.py
+python3 terminal/mieter.py
 ```
 
-Pruefen, dass der Terminal-Code ueber den Agents SDK laeuft:
+Web-App starten:
 
 ```bash
-rg "from agents|Runner.run|trace" facility_manager_agent/terminal_agenten.py terminal
-rg "chat.completions|OpenAI\\(" terminal facility_manager_agent/terminal_agenten.py
+reflex run
 ```
-Agents SDK = Logik / KI-Workflow
-mieter.py = Terminal-Eingabe und Speichern
-vermieter.py = Terminal-Dashboard
+
+Pruefen, dass Terminal und Web-App ueber den Agents SDK laufen:
+
+```bash
+rg "from agents|Runner.run|trace" facility_manager_agent/terminal_agenten.py
+rg "chat.completions|OpenAI\\(" terminal facility_manager_agent
+```
+
+Der zweite Befehl sollte fuer `terminal/` und `facility_manager_agent/` keine
+Treffer liefern. Das bestaetigt, dass der App-Code nicht mehr direkt
+`chat.completions` oder `OpenAI(...)` verwendet.
+
+Rollen der Dateien:
+
+```text
+facility_manager_agent/terminal_agenten.py = gemeinsamer Agents-SDK-Workflow
+terminal/mieter.py = Terminal-Eingabe und Speichern
+terminal/vermieter.py = Terminal-Dashboard
+facility_manager_agent/facility_manager_agent.py = Reflex-Web-App und Speichern
+```

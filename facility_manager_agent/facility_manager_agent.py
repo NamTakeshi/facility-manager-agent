@@ -1,21 +1,32 @@
-import reflex as rx
-from openai import OpenAI
-from dotenv import load_dotenv
-from datenbank import erstelle_datenbank, speichere_ticket, hole_alle_tickets, aktualisiere_ticket_status, hole_offene_tickets, hole_archiv_tickets
 import os
 import sys
+from pathlib import Path
 
-# Pfad zum Hauptordner hinzufügen damit datenbank.py gefunden wird
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import reflex as rx
+from dotenv import load_dotenv
 
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Pfad zum Hauptordner hinzufügen, damit datenbank.py gefunden wird.
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BASE_DIR))
+
+from datenbank import (
+    aktualisiere_ticket_status,
+    erstelle_datenbank,
+    hole_alle_tickets,
+    hole_archiv_tickets,
+    hole_offene_tickets,
+)
+from facility_manager_agent.terminal_agenten import (
+    beantworte_frage,
+    erstelle_schaden_workflow,
+    klassifiziere_eingabe,
+)
+
+load_dotenv(BASE_DIR / ".env")
 erstelle_datenbank()
 
 # Mietvertrag laden
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-with open(os.path.join(BASE_DIR, "mietvertrag.txt"), "r", encoding="utf-8") as f:
+with open(BASE_DIR / "mietvertrag.txt", "r", encoding="utf-8") as f:
     mietvertrag = f.read()
 
 
@@ -32,84 +43,43 @@ class State(rx.State):
     def set_nachricht(self, value: str):
         self.nachricht = value
 
-    def sende_nachricht(self):
+    async def sende_nachricht(self):
         if not self.name.strip() or not self.nachricht.strip():
             self.antwort = "Bitte Namen und Nachricht eingeben."
+            return
+
+        if not os.getenv("OPENAI_API_KEY"):
+            self.antwort = "OPENAI_API_KEY fehlt. Bitte .env Datei prüfen."
             return
 
         self.laden = True
         self.antwort = ""
 
-        # Klassifikation
-        response = client.chat.completions.create(
-            model="gpt-5.4-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """Klassifiziere die Nachricht.
-                    Antworte NUR mit: FRAGE, SCHADEN oder SONSTIGES"""
-                },
-                {"role": "user", "content": self.nachricht}
-            ]
-        )
-        self.kategorie = response.choices[0].message.content.strip()
+        try:
+            # Schritt 1: Klassifikation durch den gemeinsamen Agents-SDK-Workflow.
+            klassifikation = await klassifiziere_eingabe(self.nachricht)
+            self.kategorie = klassifikation.kategorie
 
-        if self.kategorie == "FRAGE":
-            # Mietvertrag durchsuchen
-            response = client.chat.completions.create(
-                model="gpt-5.4-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": f"""Du bist ein hilfreicher Assistent für Mieter.
-                        Beantworte Fragen nur basierend auf dem Mietvertrag.
-                        Mietvertrag: {mietvertrag}"""
-                    },
-                    {"role": "user", "content": self.nachricht}
-                ]
-            )
-            self.antwort = response.choices[0].message.content.strip()
+            if self.kategorie == "FRAGE":
+                self.antwort = await beantworte_frage(self.nachricht, mietvertrag)
 
-        elif self.kategorie == "SCHADEN":
-            # Handlungsvorschlag generieren
-            response = client.chat.completions.create(
-                model="gpt-5.4-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """Analysiere die Schadensmeldung.
-                        Format:
-                        PRIORITÄT: [HOCH/MITTEL/NIEDRIG]
-                        VORSCHLAG: [Vorschlag]
-                        EMAIL_START
-                        [E-Mail Entwurf]
-                        EMAIL_END"""
-                    },
-                    {"role": "user", "content": f"Mieter: {self.name}\nSchaden: {self.nachricht}"}
-                ]
-            )
+            elif self.kategorie == "SCHADEN":
+                workflow = await erstelle_schaden_workflow(self.nachricht, self.name)
+                schadensklassifikation = workflow.schadensklassifikation
+                ticket_speicherung = workflow.ticket_speicherung
+                self.antwort = (
+                    "Ihre Schadensmeldung wurde aufgenommen. "
+                    f"Ticket #{ticket_speicherung.ticket_id} wurde erstellt. "
+                    f"Priorität: {schadensklassifikation.prioritaet}"
+                )
 
-            antwort_text = response.choices[0].message.content.strip()
-            prioritaet = "MITTEL"
-            vorschlag = ""
-            email = ""
+            else:
+                self.antwort = "Ich kann nur Fragen zum Mietvertrag beantworten oder Schäden aufnehmen."
 
-            for zeile in antwort_text.split("\n"):
-                if zeile.startswith("PRIORITÄT:"):
-                    prioritaet = zeile.replace("PRIORITÄT:", "").strip()
-                elif zeile.startswith("VORSCHLAG:"):
-                    vorschlag = zeile.replace("VORSCHLAG:", "").strip()
-
-            if "EMAIL_START" in antwort_text and "EMAIL_END" in antwort_text:
-                email = antwort_text.split("EMAIL_START")[1].split("EMAIL_END")[0].strip()
-
-            speichere_ticket(self.name, self.nachricht, "Schaden", prioritaet, vorschlag, email)
-            self.antwort = f"Ihre Schadensmeldung wurde aufgenommen. Ticket wurde erstellt. Priorität: {prioritaet}"
-
-        else:
-            self.antwort = "Ich kann nur Fragen zum Mietvertrag beantworten oder Schäden aufnehmen."
-
-        self.laden = False
+        except Exception as exc:
+            self.antwort = f"Die Anfrage konnte nicht verarbeitet werden: {exc}"
+        finally:
+            self.laden = False
 
 def index():
     return rx.vstack(
