@@ -3,3 +3,4 @@ openai-agents
 pydantic
 python-dotenv
 reflex==0.9.3
+pypdf==4.0.0

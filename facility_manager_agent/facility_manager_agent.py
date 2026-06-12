@@ -18,6 +18,17 @@ from datenbank import (
     hole_offene_tickets,
     fuege_dummy_handwerker_ein,
 )
+
+# NEU: Importiert die neuen Funktionen
+from dokumente import lade_dokumente_in_cache, hole_kontext_fuer_mieter
+
+load_dotenv(BASE_DIR / ".env")
+erstelle_datenbank()
+fuege_dummy_handwerker_ein()
+
+# NEU: Lädt alle PDFs in den Arbeitsspeicher beim Serverstart
+lade_dokumente_in_cache()
+
 from facility_manager_agent.terminal_agenten import (
     beantworte_frage,
     erstelle_schaden_workflow,
@@ -27,11 +38,6 @@ from facility_manager_agent.terminal_agenten import (
 load_dotenv(BASE_DIR / ".env")
 erstelle_datenbank()
 fuege_dummy_handwerker_ein()
-
-# Mietvertrag laden
-with open(BASE_DIR / "mietvertrag.txt", "r", encoding="utf-8") as f:
-    mietvertrag = f.read()
-
 
 class State(rx.State):
     name: str = ""
@@ -64,7 +70,11 @@ class State(rx.State):
             self.kategorie = klassifikation.kategorie
 
             if self.kategorie == "FRAGE":
-                self.antwort = await beantworte_frage(self.nachricht, mietvertrag)
+                # NEU: Wir holen NUR den relevanten Text für diesen speziellen Mieter
+                gefilterter_kontext = hole_kontext_fuer_mieter(self.name)
+
+                # Und übergeben diesen reduzierten Text an den Agenten (Fehler korrigiert: nur 2 Zutaten)
+                self.antwort = await beantworte_frage(self.nachricht, gefilterter_kontext)
 
 
 
