@@ -25,10 +25,10 @@ def zeige_tickets():
 ┌─────────────────────────────────────┐
   ID:           {ticket[0]}
   Mieter:       {ticket[1]}
-  Beschreibung: {ticket[2]}
-  Priorität:    {ticket[4]}
-  Status:       {ticket[7]}
-  Datum:        {ticket[8]}
+  Beschreibung: {ticket[3]}
+  Priorität:    {ticket[5]}
+  Status:       {ticket[8]}
+  Datum:        {ticket[9]}
 └─────────────────────────────────────┘""")
 
 def zeige_ticket_detail(ticket_id: int):
@@ -43,17 +43,23 @@ def zeige_ticket_detail(ticket_id: int):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ID:                  {ticket[0]}
 Mieter:              {ticket[1]}
-Beschreibung:        {ticket[2]}
-Kategorie:           {ticket[3]}
-Priorität:           {ticket[4]}
-Status:              {ticket[7]}
-Datum:               {ticket[8]}
+E-Mail Mieter:       {ticket[2]}
+Beschreibung:        {ticket[3]}
+Kategorie:           {ticket[4]}
+Priorität:           {ticket[5]}
+Status:              {ticket[8]}
+Datum:               {ticket[9]}
 
 Handlungsvorschlag:
-{ticket[5]}
+{ticket[6]}
 
 E-Mail Entwurf:
-{ticket[6]}
+{ticket[7]}
+
+Handwerker:          {ticket[10]}
+Firma:               {ticket[11]}
+Fachgebiet:          {ticket[13]}
+Kontakt:             {ticket[12]}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━""")
 
     return ticket

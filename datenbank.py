@@ -18,6 +18,7 @@ def erstelle_datenbank():
         CREATE TABLE IF NOT EXISTS tickets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mieter TEXT NOT NULL,
+            mieter_email TEXT DEFAULT '',
             beschreibung TEXT NOT NULL,
             kategorie TEXT NOT NULL,
             prioritaet TEXT DEFAULT 'Mittel',
@@ -55,6 +56,7 @@ def speichere_ticket(
     prioritaet: str,
     handlungsvorschlag: str,
     email_entwurf: str,
+    mieter_email: str = "",
     handwerker_name: str = "",
     handwerker_firma: str = "",
     handwerker_email: str = "",
@@ -64,14 +66,14 @@ def speichere_ticket(
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO tickets (
-            mieter, beschreibung, kategorie, prioritaet,
+            mieter, mieter_email, beschreibung, kategorie, prioritaet,
             handlungsvorschlag, email_entwurf,
             handwerker_name, handwerker_firma,
             handwerker_email, handwerker_fachgebiet
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        mieter, beschreibung, kategorie, prioritaet,
+        mieter, mieter_email, beschreibung, kategorie, prioritaet,
         handlungsvorschlag, email_entwurf,
         handwerker_name, handwerker_firma,
         handwerker_email, handwerker_fachgebiet
@@ -88,7 +90,7 @@ def hole_alle_tickets() -> list:
     # FEHLER GEFUNDEN (behoben): handwerker_* Spalten fehlten im SELECT.
     # ticket[9..12] wurden im Dashboard referenziert, existierten aber nicht.
     cursor.execute("""
-        SELECT id, mieter, beschreibung, kategorie, prioritaet,
+        SELECT id, mieter, mieter_email, beschreibung, kategorie, prioritaet,
                handlungsvorschlag, email_entwurf, status, datum,
                handwerker_name, handwerker_firma, handwerker_email,
                handwerker_fachgebiet
@@ -116,7 +118,7 @@ def hole_offene_tickets() -> list:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, mieter, beschreibung, kategorie, prioritaet,
+        SELECT id, mieter, mieter_email, beschreibung, kategorie, prioritaet,
                handlungsvorschlag, email_entwurf, status, datum,
                handwerker_name, handwerker_firma, handwerker_email,
                handwerker_fachgebiet
@@ -132,7 +134,7 @@ def hole_archiv_tickets() -> list:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, mieter, beschreibung, kategorie, prioritaet,
+        SELECT id, mieter, mieter_email, beschreibung, kategorie, prioritaet,
                handlungsvorschlag, email_entwurf, status, datum,
                handwerker_name, handwerker_firma, handwerker_email,
                handwerker_fachgebiet
@@ -222,6 +224,16 @@ def hole_alle_handwerker() -> list:
     handwerker = cursor.fetchall()
     conn.close()
     return [list(h) for h in handwerker]
+
+def aktualisiere_ticket_mieter_email(ticket_id: int, mieter_email: str):
+    """Trägt die E-Mail-Adresse des Mieters nachträglich ins Ticket ein."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE tickets SET mieter_email = ? WHERE id = ?
+    """, (mieter_email, ticket_id))
+    conn.commit()
+    conn.close()
 
 def aktualisiere_ticket_handwerker(
     ticket_id: int,

@@ -12,12 +12,14 @@ sys.path.insert(0, str(BASE_DIR))
 from datenbank import (
     aktualisiere_ticket_status,
     aktualisiere_ticket_handwerker,
+    aktualisiere_ticket_mieter_email,
     erstelle_datenbank,
     hole_alle_tickets,
     hole_archiv_tickets,
     hole_offene_tickets,
     fuege_dummy_handwerker_ein,
 )
+from email_service import sende_email_an_mieter, sende_email_an_handwerker
 
 # NEU: Importiert die neuen Funktionen
 from dokumente import lade_dokumente_in_cache, hole_kontext_fuer_mieter
@@ -37,6 +39,7 @@ from facility_manager_agent.terminal_agenten import (
 
 class State(rx.State):
     name: str = ""
+    email: str = ""
     nachricht: str = ""
     antwort: str = ""
     kategorie: str = ""
@@ -44,6 +47,9 @@ class State(rx.State):
 
     def set_name(self, value: str):
         self.name = value
+
+    def set_email(self, value: str):
+        self.email = value
 
     def set_nachricht(self, value: str):
         self.nachricht = value
@@ -87,6 +93,11 @@ class State(rx.State):
                     handwerker_email=handwerker.email,
                     handwerker_fachgebiet=handwerker.fachgebiet,
                 )
+                # Mieter-Email ins Ticket speichern
+                aktualisiere_ticket_mieter_email(
+                    ticket_id=ticket_speicherung.ticket_id,
+                    mieter_email=self.email,
+                )
                 self.antwort = (
                     "Ihre Schadensmeldung wurde aufgenommen. "
                     f"Ticket #{ticket_speicherung.ticket_id} wurde erstellt. "
@@ -122,6 +133,19 @@ def index():
                 rx.input(
                     placeholder="Max Mustermann",
                     on_change=State.set_name,
+                    width="100%",
+                    color="#1A1A1A",
+                ),
+                width="100%",
+                align_items="start",
+            ),
+
+            # E-Mail
+            rx.vstack(
+                rx.text("Ihre E-Mail-Adresse", font_weight="500"),
+                rx.input(
+                    placeholder="max.mustermann@email.de",
+                    on_change=State.set_email,
                     width="100%",
                     color="#1A1A1A",
                 ),
@@ -204,6 +228,25 @@ class VermietState(rx.State):
 
     def setze_status(self, ticket_id: int, status: str):
         aktualisiere_ticket_status(ticket_id, status)
+
+        # E-Mails nur versenden wenn der Vermieter das Ticket freigibt
+        if status == "In Bearbeitung":
+            # Ticket aus der aktuellen Liste heraussuchen
+            ticket = next((t for t in self.tickets if t[0] == ticket_id), None)
+            if ticket:
+                sende_email_an_mieter(
+                    mieter_name=ticket[1],
+                    mieter_email=ticket[2],
+                    email_entwurf=ticket[7],
+                )
+                sende_email_an_handwerker(
+                    handwerker_name=ticket[10],
+                    handwerker_email=ticket[12],
+                    mieter_name=ticket[1],
+                    beschreibung=ticket[3],
+                    prioritaet=ticket[5],
+                )
+
         self.lade_tickets()
 
 def vermieter():
@@ -265,15 +308,16 @@ def vermieter():
             lambda ticket: rx.box(
                 rx.text(ticket[0], font_weight="bold", color="#1A1A1A"),
                 rx.text(f"Mieter: {ticket[1]}", color="#1A1A1A"),
-                rx.text(f"Beschreibung: {ticket[2]}", color="#1A1A1A"),
-                rx.text(f"Priorität: {ticket[4]}", color="#1A1A1A"),
-                rx.text(f"Status: {ticket[7]}", color="#1A1A1A"),
-                rx.text(f"Vorschlag: {ticket[5]}", color="#1A1A1A"),
-                rx.text(f"E-Mail: {ticket[6]}", color="#1A1A1A"),
-                rx.text(f"Handwerker: {ticket[9]}", color="#1A1A1A"),
-                rx.text(f"Firma: {ticket[10]}", color="#1A1A1A"),
-                rx.text(f"Fachgebiet: {ticket[12]}", color="#1A1A1A"),
-                rx.text(f"Handwerker Kontakt: {ticket[11]}", color="#1A1A1A"),
+                rx.text(f"E-Mail Mieter: {ticket[2]}", color="#1A1A1A"),
+                rx.text(f"Beschreibung: {ticket[3]}", color="#1A1A1A"),
+                rx.text(f"Priorität: {ticket[5]}", color="#1A1A1A"),
+                rx.text(f"Status: {ticket[8]}", color="#1A1A1A"),
+                rx.text(f"Vorschlag: {ticket[6]}", color="#1A1A1A"),
+                rx.text(f"E-Mail: {ticket[7]}", color="#1A1A1A"),
+                rx.text(f"Handwerker: {ticket[10]}", color="#1A1A1A"),
+                rx.text(f"Firma: {ticket[11]}", color="#1A1A1A"),
+                rx.text(f"Fachgebiet: {ticket[13]}", color="#1A1A1A"),
+                rx.text(f"Handwerker Kontakt: {ticket[12]}", color="#1A1A1A"),
 
                 # Status Buttons – immer sichtbar, alle Optionen
                 rx.hstack(
