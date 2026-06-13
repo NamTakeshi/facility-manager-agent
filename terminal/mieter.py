@@ -32,9 +32,9 @@ if not os.getenv("OPENAI_API_KEY"):
 erstelle_datenbank()
 fuege_dummy_handwerker_ein()
 
-# Mietvertrag aus Datei laden statt hardcoded.
-with open(BASE_DIR / "mietvertrag.txt", "r", encoding="utf-8") as f:
-    mietvertrag = f.read()
+# NEU: PDFs laden statt mietvertrag.txt
+from dokumente import lade_dokumente_in_cache, hole_kontext_fuer_mieter
+lade_dokumente_in_cache()
 
 async def verarbeite_schaden(beschreibung: str, mieter: str) -> str:
     workflow = await erstelle_schaden_workflow(beschreibung, mieter)
@@ -84,7 +84,8 @@ async def main():
 
         # Schritt 2: Passenden Spezial-Agenten-Workflow ausfuehren.
         if kategorie == "FRAGE":
-            antwort = await beantworte_frage(eingabe, mietvertrag)
+            kontext = hole_kontext_fuer_mieter(mieter_name)
+            antwort = await beantworte_frage(eingabe, kontext)
             print("Antwort:", antwort)
 
         elif kategorie == "SCHADEN":

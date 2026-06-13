@@ -107,13 +107,15 @@ Regeln:
 fragen_agent_inst = """
 Du bist der Mietvertrags-Frage-Agent fuer Mieter.
 
+Dir werden der spezifische Mietvertrag des Mieters und die allgemeine Hausordnung als Text übergeben.
+
 Aufgabe:
-- Beantworte Fragen ausschliesslich auf Basis des uebergebenen Mietvertrags.
+- Beantworte Fragen ausschliesslich auf Basis des übergebenen Textes.
 
 Regeln:
 - Antworte kurz, konkret und auf Deutsch.
 - Erfinde keine Informationen.
-- Wenn der Mietvertrag keine passende Information enthaelt, sage das klar.
+- Wenn die Information weder im Mietvertrag noch in der Hausordnung steht, sage klar, dass du dazu keine Informationen in den Dokumenten findest.
 """
 
 schaden_klassifizierer_inst = """
@@ -296,11 +298,11 @@ async def klassifiziere_eingabe(nachricht: str) -> EingabeKlassifikation:
         return result.final_output
 
 
-async def beantworte_frage(frage: str, mietvertrag: str) -> str:
-    """Beantwortet eine Mietvertragsfrage mit dem Mietvertrag als Kontext."""
+async def beantworte_frage(frage: str, dokumenten_kontext: str) -> str:
+    """Beantwortet eine Frage mit den gefilterten PDFs als Kontext."""
     eingabe = f"""
-Mietvertrag:
-{mietvertrag}
+Verfügbare Dokumente:
+{dokumenten_kontext}
 
 Frage des Mieters:
 {frage}
