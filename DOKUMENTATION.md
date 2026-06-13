@@ -21,7 +21,8 @@ facility-manager-agent/
 │   └── zeige_handwerker.py
 │
 ├── datenbank.py                    ← Alle Datenbankfunktionen
-├── mietvertrag.txt                 ← Beispiel Mietvertrag
+├── email_service.py                ← E-Mail-Versand via Resend
+├── dokumente.py                    ← PDF-Laden und Mieter-Kontext
 ├── facility.db                     ← SQLite Datenbank (automatisch erstellt)
 ├── .env                            ← API Keys (nicht in Git einchecken)
 ├── requirements.txt                ← Benötigte Bibliotheken
@@ -37,8 +38,11 @@ facility-manager-agent/
 # Bibliotheken installieren
 python3 -m pip install -r requirements.txt
 
-# API Key in .env Datei eintragen
-OPENAI_API_KEY=dein-api-key-hier
+# API Keys in .env Datei eintragen
+OPENAI_API_KEY=dein-openai-key
+RESEND_API_KEY=dein-resend-key         ← Account erstellen auf resend.com
+ABSENDER_EMAIL=onboarding@resend.dev   ← Im Testmodus so lassen
+BASIS_URL=http://localhost:3000         ← Basis-URL für Bestätigungs-Links
 
 # Web-App starten
 reflex run
@@ -55,18 +59,25 @@ Dann im Browser öffnen:
 ### `datenbank.py`
 Enthält alle Funktionen die mit der SQLite Datenbank kommunizieren. Wird von allen anderen Dateien importiert.
 
-| Funktion                             | Was sie macht                                                 |
-|--------------------------------------|---------------------------------------------------------------|
-| `erstelle_datenbank()`               | Erstellt die Tickets + Handwerker Tabelle                     |
-| `speichere_ticket()`                 | Speichert eine neue Schadensmeldung als Ticket                |
-| `hole_alle_tickets()`                | Gibt alle Tickets zurück                                      |
-| `hole_offene_tickets()`              | Gibt nur offene und in Bearbeitung befindliche Tickets zurück |
-| `hole_archiv_tickets()`              | Gibt nur geschlossene Tickets zurück                          |
-| `hole_alle_handwerker()`             | Gibt alle Handwerker zurück                                   |
-| `aktualisiere_ticket_status()`       | Ändert den Status eines Tickets                               |
-| `aktualisiere_ticket_handwerker()`   | Fügt Handwerker-Infos zu Ticket hinzu                         |
-| `fuege_dummy_handwerker_ein()`       | Fügt Beispiel-Handwerker ein                                  |
-| `suche_handwerker_nach_fachgebiet()` | Sucht Handwerker nach Fachgebiet                              |
+| Funktion                             | Was sie macht                                            |
+|--------------------------------------|----------------------------------------------------------|
+| `erstelle_datenbank()`               | Erstellt die Tickets + Handwerker Tabelle                |
+| `speichere_ticket()`                 | Speichert eine neue Schadensmeldung als Ticket           |
+| `hole_alle_tickets()`                | Gibt alle Tickets zurück                                 |
+| `hole_neue_tickets()`                | Gibt Tickets mit Status `Neu` zurück                     |
+| `hole_laufende_tickets()`            | Gibt Tickets mit Status `Freigegeben` / `Termin vereinbart` zurück |
+| `hole_archiv_tickets()`              | Gibt Tickets mit Status `Abgeschlossen` zurück           |
+| `zaehle_neue_tickets()`              | Gibt Anzahl neuer Tickets zurück (für Badge im Dashboard)|
+| `aktualisiere_ticket_status()`       | Ändert den Status eines Tickets                          |
+| `aktualisiere_ticket_handwerker()`   | Fügt Handwerker-Infos zu Ticket hinzu                    |
+| `aktualisiere_ticket_mieter_email()` | Trägt Mieter-E-Mail ins Ticket ein                       |
+| `aktualisiere_ticket_mieter_telefon()` | Trägt Mieter-Telefonnummer ins Ticket ein              |
+| `speichere_terminoptionen()`         | Speichert 3 Zeitfenster + Token im Ticket                |
+| `bestatige_termin()`                 | Setzt bestätigten Termin anhand des Tokens               |
+| `hole_ticket_nach_token()`           | Gibt ein Ticket anhand seines Tokens zurück              |
+| `hole_alle_handwerker()`             | Gibt alle Handwerker zurück                              |
+| `fuege_dummy_handwerker_ein()`       | Fügt Beispiel-Handwerker ein                             |
+| `suche_handwerker_nach_fachgebiet()` | Sucht Handwerker nach Fachgebiet                         |
 
 
 ---
@@ -74,7 +85,9 @@ Enthält alle Funktionen die mit der SQLite Datenbank kommunizieren. Wird von al
 ### `facility.db – Die Datenbank`
 
 Eine SQLite Datenbankdatei die alle Tickets speichert. Kein extra Datenbankserver nötig – alles in einer einzigen Datei.
-Jedes Ticket enthält: ID, Mieter, Beschreibung, Kategorie, Priorität, Handlungsvorschlag, E-Mail Entwurf, Status und Datum.
+Jedes Ticket enthält: ID, Mieter, E-Mail, Telefon, Beschreibung, Kategorie, Priorität, Handlungsvorschlag, E-Mail-Entwurf, Status, Datum, Handwerker-Infos, Terminoptionen (3 Zeitfenster + bestätigter Termin + Token).
+
+**Status-Werte:** `Neu → Freigegeben → Termin vereinbart → Abgeschlossen`
 
 ---
 
@@ -90,24 +103,26 @@ verwendet.
 **`State`** – Verwaltet den Zustand der Mieter-Seite
 | Variable / Methode | Was sie macht |
 |---|---|
-| `name` | Speichert den Namen des Mieters |
-| `nachricht` | Speichert die Eingabe des Mieters |
-| `antwort` | Speichert die Antwort des Agents |
-| `laden` | Zeigt an ob der Agent gerade verarbeitet |
-| `set_name()` | Aktualisiert den Namen wenn Mieter tippt |
-| `set_nachricht()` | Aktualisiert die Nachricht wenn Mieter tippt |
-| `sende_nachricht()` | Hauptfunktion – klassifiziert die Nachricht und reagiert |
+| `name`, `email`, `telefon` | Kontaktdaten des Mieters |
+| `nachricht` | Eingabe des Mieters |
+| `termin_1/2/3` | 3 Zeitfenster für Erreichbarkeit |
+| `antwort`, `laden` | Antwort des Agents + Ladezustand |
+| `sende_nachricht()` | Hauptfunktion – klassifiziert und reagiert |
 
 **`VermietState`** – Verwaltet den Zustand der Vermieter-Seite
 | Variable / Methode | Was sie macht |
 |---|---|
-| `tickets` | Liste aller aktuell angezeigten Tickets |
-| `ansicht` | Aktuelle Ansicht: offen / alle / archiv |
-| `zeige_offene()` | Lädt nur offene Tickets |
-| `zeige_alle()` | Lädt alle Tickets |
-| `zeige_archiv()` | Lädt nur geschlossene Tickets |
-| `lade_tickets()` | Aktualisiert die Ticket-Liste je nach Ansicht |
-| `setze_status()` | Ändert den Status eines Tickets |
+| `tickets` | Liste der aktuell angezeigten Tickets |
+| `ansicht` | Aktuelle Ansicht: neu / laufend / archiv / alle |
+| `neue_anzahl` | Anzahl neuer Tickets (für Badge) |
+| `zeige_neue/laufende/archiv/alle()` | Filter-Methoden |
+| `lade_tickets()` | Aktualisiert Ticket-Liste und Badge-Zähler |
+| `setze_status()` | Ändert Status – löst bei `Freigegeben` E-Mail-Versand aus |
+
+**`TerminState`** – Verwaltet die Terminbestätigungs-Seite (`/termin/[token]/[nummer]`)
+| Variable / Methode | Was sie macht |
+|---|---|
+| `bestatige()` | Liest Token aus URL, speichert Termin, sendet Bestätigungs-E-Mail |
 
 #### Funktionen (Fürs UI-Design)
 
@@ -115,6 +130,7 @@ verwendet.
 |---|---|
 | `index()` | Baut die Mieter-Seite (http://localhost:3000) |
 | `vermieter()` | Baut die Vermieter-Seite (http://localhost:3000/vermieter) |
+| `termin_bestaetigen()` | Bestätigungs-Seite für Handwerker (http://localhost:3000/termin/[token]/[nummer]) |
 
 ---
 
@@ -229,15 +245,17 @@ MIETER (http://localhost:3000)
 
   Bei SCHADEN:
   → Agent bewertet Priorität (HOCH / MITTEL / NIEDRIG)
-  → Erstellt Handlungsvorschlag
-  → Erstellt E-Mail Entwurf
+  → Erstellt Handlungsvorschlag (3 Punkte: Sofortmaßnahme / Nächster Schritt / Mieter informieren)
+  → Erstellt E-Mail-Entwurf (feste Struktur, endet mit "Mit freundlichen Grüßen / Ihr Vermieter Team")
   → Handwerker-Agent sucht passenden Handwerker
-  → Speicher-Agent übernimmt Ticket in SQLite
+  → Speicher-Agent übernimmt Ticket in SQLite (Status: Neu)
 
 VERMIETER (http://localhost:3000/vermieter)
-  → Sieht alle Tickets mit Details
-  → Kann zwischen Offen / Alle / Archiv wechseln
-  → Kann Status eines Tickets ändern
+  → Sieht Tickets gefiltert nach: Neu (mit Badge) / Laufend / Archiv / Alle
+  → Klickt "Freigeben & E-Mails senden" → E-Mail an Mieter + Handwerker (Status: Freigegeben)
+  → Handwerker klickt Termin-Button in E-Mail → Bestätigungs-Seite (Status: Termin vereinbart)
+  → Mieter bekommt automatisch Bestätigungs-E-Mail mit Handwerker-Kontaktdaten
+  → Vermieter schließt Ticket manuell (Status: Abgeschlossen)
 ```
 
 ---
@@ -256,10 +274,12 @@ VERMIETER (http://localhost:3000/vermieter)
 
 ## Wichtige Hinweise
 
-- Die `.env` Datei niemals in Git einchecken – sie enthält den API Key
+- Die `.env` Datei niemals in Git einchecken – sie enthält die API Keys
 - Die `facility.db` wird automatisch erstellt beim ersten Start
 - Beim Ändern der Datenbankstruktur muss `facility.db` gelöscht und neu erstellt werden
-- Terminal und Web-App nutzen den gemeinsamen OpenAI Agents SDK Workflow.
+- Terminal und Web-App nutzen den gemeinsamen OpenAI Agents SDK Workflow
+- Resend: Im Testmodus können E-Mails nur an die eigene verifizierte Adresse gesendet werden – für echten Betrieb Domain auf resend.com verifizieren und `ABSENDER_EMAIL` anpassen
+- `BASIS_URL` in `.env` muss auf den laufenden Port zeigen (Standard: 3000) – wichtig für Bestätigungs-Links in der Handwerker-E-Mail
 
 
 
