@@ -35,10 +35,6 @@ from facility_manager_agent.terminal_agenten import (
     klassifiziere_eingabe,
 )
 
-load_dotenv(BASE_DIR / ".env")
-erstelle_datenbank()
-fuege_dummy_handwerker_ein()
-
 class State(rx.State):
     name: str = ""
     nachricht: str = ""
@@ -276,6 +272,7 @@ def vermieter():
                 rx.text(f"E-Mail: {ticket[6]}", color="#1A1A1A"),
                 rx.text(f"Handwerker: {ticket[9]}", color="#1A1A1A"),
                 rx.text(f"Firma: {ticket[10]}", color="#1A1A1A"),
+                rx.text(f"Fachgebiet: {ticket[12]}", color="#1A1A1A"),
                 rx.text(f"Handwerker Kontakt: {ticket[11]}", color="#1A1A1A"),
 
                 # Status Buttons – immer sichtbar, alle Optionen
